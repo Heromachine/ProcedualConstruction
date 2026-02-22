@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Procedural Construction — Phase 2</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a141e;
+      color: #a0bcd0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 14px;
+    }
+
+    .back {
+      position: fixed;
+      top: 16px;
+      left: 20px;
+      font-size: 0.75rem;
+      color: #5a8aaa;
+      text-decoration: none;
+      letter-spacing: 1px;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .back:hover { opacity: 1; }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    h1 {
+      font-size: 0.95rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #6a9cb8;
+    }
+
+    .subtitle {
+      font-size: 0.72rem;
+      opacity: 0.4;
+      letter-spacing: 1px;
+    }
+
+    #canvas {
+      cursor: crosshair;
+      border-radius: 3px;
+      box-shadow: 0 0 60px rgba(20, 80, 140, 0.25), 0 0 0 1px rgba(80,160,220,0.1);
+      display: block;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      background: rgba(30, 70, 110, 0.6);
+      color: #a0bcd0;
+      border: 1px solid rgba(80, 160, 220, 0.2);
+      padding: 5px 14px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      letter-spacing: 1px;
+      transition: background 0.15s;
+    }
+
+    button:hover { background: rgba(40, 90, 140, 0.8); }
+
+    .hint {
+      font-size: 0.7rem;
+      opacity: 0.35;
+      letter-spacing: 0.5px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 20px;
+      font-size: 0.7rem;
+      opacity: 0.45;
+    }
+
+    .legend span { display: flex; align-items: center; gap: 5px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.water  { background: rgba(100, 180, 255, 0.5); }
+    .dot.land   { background: rgba(255, 210, 80, 0.9); }
+    .dot.v0 { background: #2d7a4f; }
+    .dot.v1 { background: #5a9040; }
+    .dot.v2 { background: #1f5e40; }
+    .dot.v3 { background: #6a7a30; }
+  </style>
+</head>
+<body>
+
+  <a class="back" href="index.html">← Menu</a>
+
+  <header>
+    <h1>Tile Variants — Phase 2</h1>
+    <p class="subtitle">Seeded randomization · Per-cell variant data · Detail pass</p>
+  </header>
+
+  <canvas id="canvas"></canvas>
+
+  <div class="controls">
+    <button id="clearBtn">Clear</button>
+    <button id="randomizeBtn">Randomize</button>
+    <span class="hint">Click or drag to paint land</span>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot water"></i> water</span>
+    <span><i class="dot land"></i> land point</span>
+    <span><i class="dot v0"></i> forest</span>
+    <span><i class="dot v1"></i> meadow</span>
+    <span><i class="dot v2"></i> deep</span>
+    <span><i class="dot v3"></i> scrub</span>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx    = canvas.getContext('2d');
+
+    // ── Grid config ──────────────────────────────────────────────────────────
+    const CELL = 52;
+    const COLS = 14;
+    const ROWS = 14;
+
+    canvas.width  = COLS * CELL;
+    canvas.height = ROWS * CELL;
+
+    // Main grid: (COLS+1) × (ROWS+1) boolean points  (true = land)
+    let grid = newGrid();
+    // Per dual-cell variant data: v = variant index, seed = RNG seed for details
+    let cellData = newCellData();
+
+    function newGrid() {
+      return Array.from({ length: ROWS + 1 }, () => Array(COLS + 1).fill(false));
+    }
+
+    function newCellData() {
+      return Array.from({ length: ROWS }, () =>
+        Array.from({ length: COLS }, () => ({ v: 0, seed: 0 }))
+      );
+    }
+
+    // ── Variants ─────────────────────────────────────────────────────────────
+    //
+    //  Each variant defines:
+    //    b    — bezier bulge factor (1.0 = standard; <1 flatter; >1 more rounded)
+    //    r    — arc radius factor   (1.0 = full half-cell; <1 tighter corner)
+    //    land — base land fill color
+    //    edge — edge highlight color
+    //    dot  — detail dot color (rgba)
+    //
+    const VARIANTS = [
+      { b: 1.00, r: 1.00, land: '#2d7a4f', edge: '#3d9960', dot: 'rgba(130,220,100,0.22)' }, // forest
+      { b: 0.52, r: 0.72, land: '#5a9040', edge: '#72b050', dot: 'rgba(190,240, 90,0.28)' }, // meadow (flat curves, small corners)
+      { b: 1.45, r: 0.90, land: '#1f5e40', edge: '#286850', dot: 'rgba( 80,190,130,0.20)' }, // deep forest (very round curves)
+      { b: 0.76, r: 0.84, land: '#6a7a30', edge: '#828f40', dot: 'rgba(210,210, 70,0.24)' }, // scrub (warm/olive)
+    ];
+
+    // ── Seeded RNG (XorShift32) ──────────────────────────────────────────────
+    function seededRng(seed) {
+      let s = (seed ^ 0xdeadbeef) >>> 0 || 1;
+      return () => {
+        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+        return (s >>> 0) / 0xFFFFFFFF;
+      };
+    }
+
+    // ── Cell type ────────────────────────────────────────────────────────────
+    function getCellType(col, row) {
+      const tl = grid[row  ][col  ];
+      const tr = grid[row  ][col+1];
+      const br = grid[row+1][col+1];
+      const bl = grid[row+1][col  ];
+      return (tl?8:0) | (tr?4:0) | (br?2:0) | (bl?1:0);
+    }
+
+    // ── Tile path builder ────────────────────────────────────────────────────
+    //
+    //  Bit encoding:  TL=8  TR=4  BR=2  BL=1
+    //
+    //  Parameters:
+    //    b  — bezier bulge: scales control-point offset from cell center
+    //         b=1 → original position; b<1 → flatter; b>1 → more rounded
+    //    r  — arc radius factor multiplied by m (half cell size)
+    //
+    function buildLandPath(type, x, y, s, b, r) {
+      const m    = s / 2;
+      const arcR = m * r;
+
+      switch (type) {
+
+        // ── All land ─────────────────────────────────────────────────────────
+        case 15:
+          ctx.rect(x, y, s, s);
+          break;
+
+        // ── One corner (convex arc) ──────────────────────────────────────────
+        //  moveTo(corner) → canvas auto-lines to arc start → arc → closePath
+        case 8:  // TL
+          ctx.moveTo(x,   y);   ctx.arc(x,   y,   arcR, 0,           Math.PI/2);   ctx.closePath(); break;
+        case 4:  // TR
+          ctx.moveTo(x+s, y);   ctx.arc(x+s, y,   arcR, Math.PI/2,   Math.PI);     ctx.closePath(); break;
+        case 2:  // BR
+          ctx.moveTo(x+s, y+s); ctx.arc(x+s, y+s, arcR, Math.PI,     3*Math.PI/2); ctx.closePath(); break;
+        case 1:  // BL
+          ctx.moveTo(x,   y+s); ctx.arc(x,   y+s, arcR, 3*Math.PI/2, Math.PI*2);  ctx.closePath(); break;
+
+        // ── Two adjacent corners (edge piece) ────────────────────────────────
+        //  Control point = cell center + (water direction) * m * b
+        //  b=1  → control at opposite wall (original)
+        //  b<1  → flatter curve
+        //  b>1  → more pronounced curve
+        case 12: // TL + TR  →  water below
+          ctx.moveTo(x, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+m);
+          ctx.quadraticCurveTo(x+m, y+m + m*b, x, y+m);
+          ctx.closePath(); break;
+        case 6:  // TR + BR  →  water left
+          ctx.moveTo(x+s, y); ctx.lineTo(x+s, y+s); ctx.lineTo(x+m, y+s);
+          ctx.quadraticCurveTo(x+m - m*b, y+m, x+m, y);
+          ctx.closePath(); break;
+        case 3:  // BR + BL  →  water above
+          ctx.moveTo(x+s, y+m);
+          ctx.quadraticCurveTo(x+m, y+m - m*b, x, y+m);
+          ctx.lineTo(x, y+s); ctx.lineTo(x+s, y+s);
+          ctx.closePath(); break;
+        case 9:  // BL + TL  →  water right
+          ctx.moveTo(x, y); ctx.lineTo(x, y+s); ctx.lineTo(x+m, y+s);
+          ctx.quadraticCurveTo(x+m + m*b, y+m, x+m, y);
+          ctx.closePath(); break;
+
+        // ── Two diagonal corners (two separate convex arcs) ──────────────────
+        case 10: // TL + BR
+          ctx.moveTo(x,   y);   ctx.arc(x,   y,   arcR, 0,       Math.PI/2); ctx.closePath();
+          ctx.moveTo(x+s, y+s); ctx.arc(x+s, y+s, arcR, Math.PI, 3*Math.PI/2); ctx.closePath(); break;
+        case 5:  // TR + BL
+          ctx.moveTo(x+s, y);   ctx.arc(x+s, y,   arcR, Math.PI/2,   Math.PI); ctx.closePath();
+          ctx.moveTo(x,   y+s); ctx.arc(x,   y+s, arcR, 3*Math.PI/2, Math.PI*2); ctx.closePath(); break;
+
+        // ── Three corners (concave cut at missing corner) ────────────────────
+        //  Control point sits at the missing (water) corner — unchanged across variants.
+        //  The concave curve's depth is inherently defined by the corner position.
+        case 14: // missing BL
+          ctx.moveTo(x, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+s); ctx.lineTo(x+m, y+s);
+          ctx.quadraticCurveTo(x, y+s, x, y+m); ctx.closePath(); break;
+        case 13: // missing BR
+          ctx.moveTo(x, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+m);
+          ctx.quadraticCurveTo(x+s, y+s, x+m, y+s); ctx.lineTo(x, y+s); ctx.closePath(); break;
+        case 11: // missing TR
+          ctx.moveTo(x, y); ctx.lineTo(x+m, y);
+          ctx.quadraticCurveTo(x+s, y, x+s, y+m); ctx.lineTo(x+s, y+s); ctx.lineTo(x, y+s); ctx.closePath(); break;
+        case 7:  // missing TL
+          ctx.moveTo(x+m, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+s); ctx.lineTo(x, y+s); ctx.lineTo(x, y+m);
+          ctx.quadraticCurveTo(x, y, x+m, y); ctx.closePath(); break;
+      }
+    }
+
+    // ── Detail dot pass ──────────────────────────────────────────────────────
+    //  Draws small seeded random dots clipped to the land shape.
+    //  Because we clip, dots outside the land region are invisible — no need
+    //  to pre-compute which positions fall inside the shape.
+    function drawDetails(type, x, y, s, variant, seed) {
+      if (type === 0) return;
+      const v   = VARIANTS[variant];
+      const rng = seededRng(seed);
+      const m   = s / 2;
+
+      ctx.save();
+
+      // Clip to land shape
+      ctx.beginPath();
+      buildLandPath(type, x, y, s, v.b, v.r);
+      ctx.clip();
+
+      // Scatter dots
+      const count = 5 + Math.floor(rng() * 5);
+      for (let i = 0; i < count; i++) {
+        const dx = x + rng() * s;
+        const dy = y + rng() * s;
+        const dr = s * (0.035 + rng() * 0.055);
+        ctx.beginPath();
+        ctx.arc(dx, dy, dr, 0, Math.PI * 2);
+        ctx.fillStyle = v.dot;
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    // ── Draw a single dual-grid cell ──────────────────────────────────────────
+    function drawCell(col, row) {
+      const x = col * CELL, y = row * CELL, s = CELL;
+      const type = getCellType(col, row);
+
+      // Water background
+      ctx.fillStyle = '#1a4d72';
+      ctx.fillRect(x, y, s, s);
+
+      if (type === 0) return;
+
+      const { v, seed } = cellData[row][col];
+      const variant = VARIANTS[v];
+
+      // Land fill
+      ctx.fillStyle = variant.land;
+      ctx.beginPath();
+      buildLandPath(type, x, y, s, variant.b, variant.r);
+      ctx.fill();
+
+      // Detail dots (clipped)
+      drawDetails(type, x, y, s, v, seed);
+
+      // Edge highlight
+      ctx.strokeStyle = variant.edge;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      buildLandPath(type, x, y, s, variant.b, variant.r);
+      ctx.stroke();
+    }
+
+    // ── Overlay: grid lines + main-grid point dots ───────────────────────────
+    function drawOverlay() {
+      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      ctx.lineWidth = 1;
+      for (let c = 0; c <= COLS; c++) {
+        ctx.beginPath(); ctx.moveTo(c*CELL, 0); ctx.lineTo(c*CELL, ROWS*CELL); ctx.stroke();
+      }
+      for (let r = 0; r <= ROWS; r++) {
+        ctx.beginPath(); ctx.moveTo(0, r*CELL); ctx.lineTo(COLS*CELL, r*CELL); ctx.stroke();
+      }
+      for (let r = 0; r <= ROWS; r++) {
+        for (let c = 0; c <= COLS; c++) {
+          ctx.beginPath();
+          ctx.arc(c*CELL, r*CELL, grid[r][c] ? 5 : 3, 0, Math.PI*2);
+          ctx.fillStyle = grid[r][c] ? 'rgba(255,210,80,0.95)' : 'rgba(80,160,220,0.35)';
+          ctx.fill();
+        }
+      }
+    }
+
+    function render() {
+      ctx.fillStyle = '#0d1e2d';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (let r = 0; r < ROWS; r++)
+        for (let c = 0; c < COLS; c++)
+          drawCell(c, r);
+      drawOverlay();
+    }
+
+    // ── Variant data update ──────────────────────────────────────────────────
+    //  When a main-grid point at (pgCol, pgRow) changes, re-seed the 4
+    //  surrounding dual-grid cells so each new land configuration gets a
+    //  freshly randomized variant.
+    function updateCellData(pgCol, pgRow) {
+      for (let dr = -1; dr <= 0; dr++) {
+        for (let dc = -1; dc <= 0; dc++) {
+          const cr = pgRow + dr;
+          const cc = pgCol + dc;
+          if (cr >= 0 && cr < ROWS && cc >= 0 && cc < COLS) {
+            if (getCellType(cc, cr) !== 0) {
+              cellData[cr][cc] = {
+                v:    Math.floor(Math.random() * VARIANTS.length),
+                seed: Math.floor(Math.random() * 65536),
+              };
+            }
+          }
+        }
+      }
+    }
+
+    // Re-seed every land cell (for the Randomize button)
+    function randomizeAll() {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (getCellType(c, r) !== 0) {
+            cellData[r][c] = {
+              v:    Math.floor(Math.random() * VARIANTS.length),
+              seed: Math.floor(Math.random() * 65536),
+            };
+          }
+        }
+      }
+    }
+
+    // ── Mouse interaction ────────────────────────────────────────────────────
+    let painting = false, paintValue = true;
+
+    function nearestPoint(e) {
+      const rect = canvas.getBoundingClientRect();
+      const col = Math.round((e.clientX - rect.left) * (canvas.width  / rect.width)  / CELL);
+      const row = Math.round((e.clientY - rect.top)  * (canvas.height / rect.height) / CELL);
+      return { col, row, valid: col >= 0 && col <= COLS && row >= 0 && row <= ROWS };
+    }
+
+    function paint(e) {
+      const { col, row, valid } = nearestPoint(e);
+      if (!valid) return;
+      if (grid[row][col] !== paintValue) {
+        grid[row][col] = paintValue;
+        updateCellData(col, row);
+        render();
+      }
+    }
+
+    canvas.addEventListener('mousedown', e => {
+      painting = true;
+      const { col, row, valid } = nearestPoint(e);
+      if (valid) paintValue = !grid[row][col];
+      paint(e);
+    });
+    canvas.addEventListener('mousemove', e => { if (painting) paint(e); });
+    window.addEventListener('mouseup', () => { painting = false; });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      grid = newGrid(); cellData = newCellData(); render();
+    });
+
+    document.getElementById('randomizeBtn').addEventListener('click', () => {
+      randomizeAll(); render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Procedural Construction — Phase 1</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a141e;
+      color: #a0bcd0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 14px;
+    }
+
+    .back {
+      position: fixed;
+      top: 16px;
+      left: 20px;
+      font-size: 0.75rem;
+      color: #5a8aaa;
+      text-decoration: none;
+      letter-spacing: 1px;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .back:hover { opacity: 1; }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    h1 {
+      font-size: 0.95rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #6a9cb8;
+    }
+
+    .subtitle {
+      font-size: 0.72rem;
+      opacity: 0.4;
+      letter-spacing: 1px;
+    }
+
+    #canvas {
+      cursor: crosshair;
+      border-radius: 3px;
+      box-shadow: 0 0 60px rgba(20, 80, 140, 0.25), 0 0 0 1px rgba(80,160,220,0.1);
+      display: block;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      background: rgba(30, 70, 110, 0.6);
+      color: #a0bcd0;
+      border: 1px solid rgba(80, 160, 220, 0.2);
+      padding: 5px 14px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      letter-spacing: 1px;
+      transition: background 0.15s;
+    }
+
+    button:hover { background: rgba(40, 90, 140, 0.8); }
+
+    .hint {
+      font-size: 0.7rem;
+      opacity: 0.35;
+      letter-spacing: 0.5px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 16px;
+      font-size: 0.7rem;
+      opacity: 0.45;
+    }
+
+    .legend span { display: flex; align-items: center; gap: 5px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.water { background: rgba(100, 180, 255, 0.5); }
+    .dot.land  { background: rgba(255, 210, 80, 0.9); }
+  </style>
+</head>
+<body>
+
+  <a class="back" href="index.html">← Menu</a>
+
+  <header>
+    <h1>Dual Grid — Phase 1</h1>
+    <p class="subtitle">Oscar Ståhlberg · Townscaper technique</p>
+  </header>
+
+  <canvas id="canvas"></canvas>
+
+  <div class="controls">
+    <button id="clearBtn">Clear</button>
+    <span class="hint">Click or drag to paint land</span>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot water"></i> water point</span>
+    <span><i class="dot land"></i> land point</span>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx    = canvas.getContext('2d');
+
+    // ── Grid config ──────────────────────────────────────────────────────────
+    const CELL = 52;
+    const COLS = 14;
+    const ROWS = 14;
+
+    canvas.width  = COLS * CELL;
+    canvas.height = ROWS * CELL;
+
+    let grid = newGrid();
+
+    function newGrid() {
+      return Array.from({ length: ROWS + 1 }, () => Array(COLS + 1).fill(false));
+    }
+
+    // ── Colors ───────────────────────────────────────────────────────────────
+    const C = {
+      bgDeep:   '#0d1e2d',
+      water:    '#1a4d72',
+      land:     '#2d7a4f',
+      landEdge: '#3d9960',
+      dotOff:   'rgba(80,160,220,0.35)',
+      dotOn:    'rgba(255,210,80,0.95)',
+      gridLine: 'rgba(255,255,255,0.03)',
+    };
+
+    // ── Tile shapes ──────────────────────────────────────────────────────────
+    //  Bit encoding:  TL=8  TR=4  BR=2  BL=1
+    function buildLandPath(type, x, y, s) {
+      const m = s / 2;
+
+      switch (type) {
+        case 15:
+          ctx.rect(x, y, s, s);
+          break;
+
+        case 8:  ctx.moveTo(x,   y);   ctx.arc(x,   y,   m, 0,           Math.PI/2);       ctx.closePath(); break;
+        case 4:  ctx.moveTo(x+s, y);   ctx.arc(x+s, y,   m, Math.PI/2,   Math.PI);         ctx.closePath(); break;
+        case 2:  ctx.moveTo(x+s, y+s); ctx.arc(x+s, y+s, m, Math.PI,     3*Math.PI/2);     ctx.closePath(); break;
+        case 1:  ctx.moveTo(x,   y+s); ctx.arc(x,   y+s, m, 3*Math.PI/2, Math.PI*2);       ctx.closePath(); break;
+
+        case 12:
+          ctx.moveTo(x, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+m);
+          ctx.quadraticCurveTo(x+m, y+s, x, y+m); ctx.closePath(); break;
+        case 6:
+          ctx.moveTo(x+s, y); ctx.lineTo(x+s, y+s); ctx.lineTo(x+m, y+s);
+          ctx.quadraticCurveTo(x, y+m, x+m, y); ctx.closePath(); break;
+        case 3:
+          ctx.moveTo(x+s, y+m); ctx.quadraticCurveTo(x+m, y, x, y+m);
+          ctx.lineTo(x, y+s); ctx.lineTo(x+s, y+s); ctx.closePath(); break;
+        case 9:
+          ctx.moveTo(x, y); ctx.lineTo(x, y+s); ctx.lineTo(x+m, y+s);
+          ctx.quadraticCurveTo(x+s, y+m, x+m, y); ctx.closePath(); break;
+
+        case 10:
+          ctx.moveTo(x,   y);   ctx.arc(x,   y,   m, 0,       Math.PI/2); ctx.closePath();
+          ctx.moveTo(x+s, y+s); ctx.arc(x+s, y+s, m, Math.PI, 3*Math.PI/2); ctx.closePath(); break;
+        case 5:
+          ctx.moveTo(x+s, y);   ctx.arc(x+s, y,   m, Math.PI/2,     Math.PI); ctx.closePath();
+          ctx.moveTo(x,   y+s); ctx.arc(x,   y+s, m, 3*Math.PI/2,   Math.PI*2); ctx.closePath(); break;
+
+        case 14:
+          ctx.moveTo(x, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+s); ctx.lineTo(x+m, y+s);
+          ctx.quadraticCurveTo(x, y+s, x, y+m); ctx.closePath(); break;
+        case 13:
+          ctx.moveTo(x, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+m);
+          ctx.quadraticCurveTo(x+s, y+s, x+m, y+s); ctx.lineTo(x, y+s); ctx.closePath(); break;
+        case 11:
+          ctx.moveTo(x, y); ctx.lineTo(x+m, y);
+          ctx.quadraticCurveTo(x+s, y, x+s, y+m); ctx.lineTo(x+s, y+s); ctx.lineTo(x, y+s); ctx.closePath(); break;
+        case 7:
+          ctx.moveTo(x+m, y); ctx.lineTo(x+s, y); ctx.lineTo(x+s, y+s); ctx.lineTo(x, y+s); ctx.lineTo(x, y+m);
+          ctx.quadraticCurveTo(x, y, x+m, y); ctx.closePath(); break;
+      }
+    }
+
+    function drawCell(col, row) {
+      const x = col * CELL, y = row * CELL, s = CELL;
+      const tl = grid[row][col], tr = grid[row][col+1];
+      const br = grid[row+1][col+1], bl = grid[row+1][col];
+      const type = (tl?8:0)|(tr?4:0)|(br?2:0)|(bl?1:0);
+
+      ctx.fillStyle = C.water;
+      ctx.fillRect(x, y, s, s);
+      if (type === 0) return;
+
+      ctx.fillStyle = C.land;
+      ctx.beginPath(); buildLandPath(type, x, y, s); ctx.fill();
+
+      ctx.strokeStyle = C.landEdge;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); buildLandPath(type, x, y, s); ctx.stroke();
+    }
+
+    function drawOverlay() {
+      ctx.strokeStyle = C.gridLine;
+      ctx.lineWidth = 1;
+      for (let c = 0; c <= COLS; c++) {
+        ctx.beginPath(); ctx.moveTo(c*CELL, 0); ctx.lineTo(c*CELL, ROWS*CELL); ctx.stroke();
+      }
+      for (let r = 0; r <= ROWS; r++) {
+        ctx.beginPath(); ctx.moveTo(0, r*CELL); ctx.lineTo(COLS*CELL, r*CELL); ctx.stroke();
+      }
+      for (let r = 0; r <= ROWS; r++) {
+        for (let c = 0; c <= COLS; c++) {
+          ctx.beginPath();
+          ctx.arc(c*CELL, r*CELL, grid[r][c] ? 5 : 3, 0, Math.PI*2);
+          ctx.fillStyle = grid[r][c] ? C.dotOn : C.dotOff;
+          ctx.fill();
+        }
+      }
+    }
+
+    function render() {
+      ctx.fillStyle = C.bgDeep;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (let r = 0; r < ROWS; r++)
+        for (let c = 0; c < COLS; c++)
+          drawCell(c, r);
+      drawOverlay();
+    }
+
+    // ── Input ────────────────────────────────────────────────────────────────
+    let painting = false, paintValue = true;
+
+    function nearestPoint(e) {
+      const rect = canvas.getBoundingClientRect();
+      const col = Math.round((e.clientX - rect.left) * (canvas.width  / rect.width)  / CELL);
+      const row = Math.round((e.clientY - rect.top)  * (canvas.height / rect.height) / CELL);
+      return { col, row, valid: col >= 0 && col <= COLS && row >= 0 && row <= ROWS };
+    }
+
+    function paint(e) {
+      const { col, row, valid } = nearestPoint(e);
+      if (!valid) return;
+      if (grid[row][col] !== paintValue) { grid[row][col] = paintValue; render(); }
+    }
+
+    canvas.addEventListener('mousedown', e => {
+      painting = true;
+      const { col, row, valid } = nearestPoint(e);
+      if (valid) paintValue = !grid[row][col];
+      paint(e);
+    });
+    canvas.addEventListener('mousemove', e => { if (painting) paint(e); });
+    window.addEventListener('mouseup', () => { painting = false; });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      grid = newGrid(); render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

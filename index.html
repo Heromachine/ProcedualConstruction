@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Procedural Construction</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #080f16;
+      color: #8ab0c8;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      gap: 40px;
+    }
+
+    header {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      color: #5a90b0;
+      font-weight: 400;
+    }
+
+    .tagline {
+      font-size: 0.72rem;
+      opacity: 0.35;
+      letter-spacing: 2px;
+    }
+
+    .author {
+      font-size: 0.68rem;
+      opacity: 0.25;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+
+    /* ── Phase grid ── */
+    .phases {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      width: 100%;
+      max-width: 900px;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(80,160,220,0.08);
+      border-radius: 4px;
+      padding: 22px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      transition: background 0.15s, border-color 0.15s;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    a.card:hover {
+      background: rgba(40,100,160,0.12);
+      border-color: rgba(80,160,220,0.25);
+    }
+
+    a.card:hover .num {
+      color: #7ab8d8;
+    }
+
+    .card.planned {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    .num {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: rgba(80,140,180,0.35);
+      line-height: 1;
+      letter-spacing: -1px;
+      transition: color 0.15s;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      color: #a0c8e0;
+      letter-spacing: 1px;
+      font-weight: 400;
+    }
+
+    .card-desc {
+      font-size: 0.7rem;
+      line-height: 1.6;
+      opacity: 0.45;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.6rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 2px;
+      margin-top: 4px;
+      align-self: flex-start;
+    }
+
+    .badge.done {
+      background: rgba(50,160,100,0.15);
+      color: #60c080;
+      border: 1px solid rgba(50,160,100,0.3);
+    }
+
+    .badge.planned {
+      background: rgba(80,120,160,0.1);
+      color: rgba(120,160,190,0.6);
+      border: 1px solid rgba(80,120,160,0.15);
+    }
+
+    footer {
+      font-size: 0.65rem;
+      opacity: 0.2;
+      letter-spacing: 1px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Procedural Construction</h1>
+    <p class="tagline">Townscaper technique — rebuilt from scratch</p>
+    <p class="author">Based on Oscar Ståhlberg's dual grid system</p>
+  </header>
+
+  <div class="phases">
+
+    <a href="phase1.html" class="card">
+      <div class="num">01</div>
+      <div class="card-title">Dual Grid</div>
+      <p class="card-desc">Basic dual grid system with 6 tile types drawn via arcs &amp; bezier curves. Click to paint land.</p>
+      <span class="badge done">Complete</span>
+    </a>
+
+    <a href="phase2.html" class="card">
+      <div class="num">02</div>
+      <div class="card-title">Tile Variants</div>
+      <p class="card-desc">Multiple shape &amp; color variants per tile, seeded per-cell randomization, detail dot pass.</p>
+      <span class="badge done">Complete</span>
+    </a>
+
+    <a href="phase3.html" class="card">
+      <div class="num">03</div>
+      <div class="card-title">Organic Grid</div>
+      <p class="card-desc">Jittered irregular quad grid with Laplacian relaxation. Quad-based tile rendering with real corner coordinates.</p>
+      <span class="badge done">Complete</span>
+    </a>
+
+    <a href="phase4.html" class="card">
+      <div class="num">04</div>
+      <div class="card-title">Multi-tile Pieces</div>
+      <p class="card-desc">Pattern matching triggers spanning pieces. 2×2 mountain, 1×3 and 3×1 ridges replace claimed cells with gradient dome visuals.</p>
+      <span class="badge done">Complete</span>
+    </a>
+
+    <a href="phase5.html" class="card">
+      <div class="num">05</div>
+      <div class="card-title">Wave Function Collapse</div>
+      <p class="card-desc">Autonomous island generation via WFC — no player input. Minimum-entropy collapse with center-bias propagation. Mountains &amp; ridges emerge organically.</p>
+      <span class="badge done">Complete</span>
+    </a>
+
+  </div>
+
+  <footer>PLAN.md · index.html · phase1.html · phase2.html</footer>
+
+</body>
+</html>

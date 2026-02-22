@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-tile Pieces — Phase 4</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a141e;
+    color: #c8d8e8;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+  }
+  #menu-link { position:fixed; top:14px; left:16px; color:#7ab4d4; text-decoration:none; font-size:13px; opacity:0.75; transition:opacity 0.15s; }
+  #menu-link:hover { opacity:1; }
+  h1 { font-size:20px; font-weight:600; letter-spacing:0.03em; color:#ddeeff; }
+  .subtitle { font-size:12px; color:#6a8fa8; letter-spacing:0.04em; }
+  canvas { cursor:crosshair; border-radius:4px; box-shadow:0 4px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06); display:block; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  button { background:#1a2d3f; color:#a8c8e0; border:1px solid rgba(255,255,255,0.1); border-radius:5px; padding:6px 16px; font-size:13px; cursor:pointer; transition:background 0.15s, color 0.15s; }
+  button:hover { background:#253d54; color:#ddeeff; }
+  .hint { font-size:11px; color:#4a6a80; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; font-size:11px; color:#7a9ab0; }
+  .legend-item { display:flex; align-items:center; gap:5px; }
+  .legend-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+</style>
+</head>
+<body>
+<a href="index.html" id="menu-link">&#8592; Menu</a>
+<h1>Multi-tile Pieces &#8212; Phase 4</h1>
+<p class="subtitle">Pattern matching &middot; Multi-cell spanning pieces &middot; The Townscaper magic</p>
+<canvas id="c"></canvas>
+<div class="controls">
+  <button id="btn-gen">Generate</button>
+  <button id="btn-clear">Clear</button>
+  <button id="btn-rand">Randomize</button>
+  <span class="hint">Click or drag to paint land</span>
+</div>
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#1a4d72"></div>water</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2d7a4f"></div>forest</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#5a9040"></div>meadow</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#1f5e40"></div>deep</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#6a7a30"></div>scrub</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#5a9060"></div>mountain</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#4a8858"></div>ridge</div>
+</div>
+<script>
+const CELL=52, COLS=14, ROWS=14, JITTER=CELL*0.38;
+const C = { bgDeep:'#0d1e2d', water:'#1a4d72', dotOff:'rgba(80,160,220,0.35)', dotOn:'rgba(255,210,80,0.95)', grid:'rgba(255,255,255,0.05)' };
+const VARIANTS = [
+  { land:'#2d7a4f', edge:'#3d9960', dot:'rgba(130,220,100,0.22)' },
+  { land:'#5a9040', edge:'#72b050', dot:'rgba(190,240,90,0.28)'  },
+  { land:'#1f5e40', edge:'#286850', dot:'rgba(80,190,130,0.20)'  },
+  { land:'#6a7a30', edge:'#828f40', dot:'rgba(210,210,70,0.24)'  },
+];
+const canvas=document.getElementById('c'), ctx=canvas.getContext('2d');
+canvas.width=COLS*CELL; canvas.height=ROWS*CELL;
+let points=[], grid=[], cellData=[];
+
+function initState() {
+  grid=Array.from({length:ROWS+1},()=>Array(COLS+1).fill(false));
+  cellData=Array.from({length:ROWS},()=>Array.from({length:COLS},()=>({v:0,seed:Math.random()*0xffffffff>>>0})));
+}
+
+function seededRng(seed) {
+  let s=(seed^0xdeadbeef)>>>0||1;
+  return ()=>{ s^=s<<13; s^=s>>17; s^=s<<5; return (s>>>0)/0xFFFFFFFF; };
+}
+
+function generateOrganic() {
+  const pts=Array.from({length:ROWS+1},(_,r)=>Array.from({length:COLS+1},(_,c)=>{
+    const onBorder=r===0||r===ROWS||c===0||c===COLS;
+    return { x:c*CELL+(onBorder?0:(Math.random()-0.5)*JITTER*2), y:r*CELL+(onBorder?0:(Math.random()-0.5)*JITTER*2) };
+  }));
+  for(let iter=0;iter<5;iter++) for(let r=1;r<ROWS;r++) for(let c=1;c<COLS;c++)
+    pts[r][c]={ x:(pts[r-1][c].x+pts[r+1][c].x+pts[r][c-1].x+pts[r][c+1].x)/4, y:(pts[r-1][c].y+pts[r+1][c].y+pts[r][c-1].y+pts[r][c+1].y)/4 };
+  return pts;
+}
+
+function midpt(a,b){ return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}; }
+
+function getCellType(col,row){
+  let t=0;
+  if(grid[row][col]) t|=8; if(grid[row][col+1]) t|=4;
+  if(grid[row+1][col+1]) t|=2; if(grid[row+1][col]) t|=1;
+  return t;
+}
+
+function buildQuadPath(ctx,type,p0,p1,p2,p3){
+  const m01=midpt(p0,p1),m12=midpt(p1,p2),m23=midpt(p2,p3),m30=midpt(p3,p0);
+  switch(type){
+    case 0: break;
+    case 15: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+    case 8:  ctx.moveTo(m01.x,m01.y); ctx.quadraticCurveTo(p0.x,p0.y,m30.x,m30.y); ctx.closePath(); break;
+    case 4:  ctx.moveTo(m12.x,m12.y); ctx.quadraticCurveTo(p1.x,p1.y,m01.x,m01.y); ctx.closePath(); break;
+    case 2:  ctx.moveTo(m23.x,m23.y); ctx.quadraticCurveTo(p2.x,p2.y,m12.x,m12.y); ctx.closePath(); break;
+    case 1:  ctx.moveTo(m30.x,m30.y); ctx.quadraticCurveTo(p3.x,p3.y,m23.x,m23.y); ctx.closePath(); break;
+    case 12: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(m12.x,m12.y); ctx.quadraticCurveTo(m23.x,m23.y,m30.x,m30.y); ctx.closePath(); break;
+    case 6:  ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(m23.x,m23.y); ctx.quadraticCurveTo(m30.x,m30.y,m01.x,m01.y); ctx.closePath(); break;
+    case 3:  ctx.moveTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.lineTo(m30.x,m30.y); ctx.quadraticCurveTo(m01.x,m01.y,m12.x,m12.y); ctx.closePath(); break;
+    case 9:  ctx.moveTo(p3.x,p3.y); ctx.lineTo(p0.x,p0.y); ctx.lineTo(m01.x,m01.y); ctx.quadraticCurveTo(m12.x,m12.y,m23.x,m23.y); ctx.closePath(); break;
+    case 10: ctx.moveTo(m01.x,m01.y); ctx.quadraticCurveTo(p0.x,p0.y,m30.x,m30.y); ctx.closePath(); ctx.moveTo(m23.x,m23.y); ctx.quadraticCurveTo(p2.x,p2.y,m12.x,m12.y); ctx.closePath(); break;
+    case 5:  ctx.moveTo(m12.x,m12.y); ctx.quadraticCurveTo(p1.x,p1.y,m01.x,m01.y); ctx.closePath(); ctx.moveTo(m30.x,m30.y); ctx.quadraticCurveTo(p3.x,p3.y,m23.x,m23.y); ctx.closePath(); break;
+    case 14: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(m23.x,m23.y); ctx.quadraticCurveTo(p3.x,p3.y,m30.x,m30.y); ctx.closePath(); break;
+    case 13: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(m12.x,m12.y); ctx.quadraticCurveTo(p2.x,p2.y,m23.x,m23.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+    case 11: ctx.moveTo(p0.x,p0.y); ctx.lineTo(m01.x,m01.y); ctx.quadraticCurveTo(p1.x,p1.y,m12.x,m12.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+    case 7:  ctx.moveTo(m30.x,m30.y); ctx.quadraticCurveTo(p0.x,p0.y,m01.x,m01.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+  }
+}
+
+function updateCellData(pgCol,pgRow){
+  const neighbors=[[pgRow-1,pgCol-1],[pgRow-1,pgCol],[pgRow,pgCol-1],[pgRow,pgCol]];
+  for(const [cr,cc] of neighbors)
+    if(cr>=0&&cr<ROWS&&cc>=0&&cc<COLS)
+      cellData[cr][cc]={v:Math.floor(Math.random()*VARIANTS.length),seed:Math.random()*0xffffffff>>>0};
+}
+
+function nearestPoint(mx,my){
+  let best=null,bestDist=Infinity;
+  for(let r=0;r<=ROWS;r++) for(let c=0;c<=COLS;c++){
+    const pt=points[r][c],dx=pt.x-mx,dy=pt.y-my,d=dx*dx+dy*dy;
+    if(d<bestDist){bestDist=d;best={r,c};}
+  }
+  return best;
+}
+
+/* Phase 4: pattern scanning */
+function findSpecialPieces() {
+  const claimed = Array.from({length:ROWS}, ()=>Array(COLS).fill(false));
+  const pieces = [];
+  // 2x2 mountain first (highest priority)
+  for (let r=0; r<=ROWS-2; r++) for (let c=0; c<=COLS-2; c++) {
+    if (claimed[r][c]||claimed[r][c+1]||claimed[r+1][c]||claimed[r+1][c+1]) continue;
+    if ([getCellType(c,r),getCellType(c+1,r),getCellType(c,r+1),getCellType(c+1,r+1)].every(t=>t===15)) {
+      pieces.push({kind:'mountain',dc:c,dr:r});
+      claimed[r][c]=claimed[r][c+1]=claimed[r+1][c]=claimed[r+1][c+1]=true;
+    }
+  }
+  // 1x3 horizontal ridge
+  for (let r=0; r<ROWS; r++) for (let c=0; c<=COLS-3; c++) {
+    if (claimed[r][c]||claimed[r][c+1]||claimed[r][c+2]) continue;
+    if ([getCellType(c,r),getCellType(c+1,r),getCellType(c+2,r)].every(t=>t===15)) {
+      pieces.push({kind:'ridgeH',dc:c,dr:r});
+      claimed[r][c]=claimed[r][c+1]=claimed[r][c+2]=true;
+    }
+  }
+  // 3x1 vertical ridge
+  for (let r=0; r<=ROWS-3; r++) for (let c=0; c<COLS; c++) {
+    if (claimed[r][c]||claimed[r+1][c]||claimed[r+2][c]) continue;
+    if ([getCellType(c,r),getCellType(c,r+1),getCellType(c,r+2)].every(t=>t===15)) {
+      pieces.push({kind:'ridgeV',dc:c,dr:r});
+      claimed[r][c]=claimed[r+1][c]=claimed[r+2][c]=true;
+    }
+  }
+  return {pieces, claimed};
+}
+
+/* Phase 4: draw a special multi-tile piece */
+function drawSpecialPiece(piece) {
+  ctx.save();
+  if (piece.kind === 'mountain') {
+    const dc = piece.dc, dr = piece.dr;
+    // Region spans points[dr][dc] -> points[dr+2][dc+2]
+    const cx = points[dr+1][dc+1].x;
+    const cy = points[dr+1][dc+1].y;
+    const width = ((points[dr][dc+2].x - points[dr][dc].x) + (points[dr+2][dc+2].x - points[dr+2][dc].x)) / 2;
+    const height = ((points[dr+2][dc].y - points[dr][dc].y) + (points[dr+2][dc+2].y - points[dr][dc+2].y)) / 2;
+    const rx = width * 0.44;
+    const ry = height * 0.40;
+
+    // 1. Dark base shadow
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + ry*0.25, rx*1.05, ry*0.3, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(10,25,15,0.5)';
+    ctx.fill();
+
+    // 2. Main dome body with radial gradient
+    const grad = ctx.createRadialGradient(cx - rx*0.2, cy - ry*0.35, 0, cx, cy, Math.max(rx, ry));
+    grad.addColorStop(0,   '#7ab870');
+    grad.addColorStop(0.45,'#3a7850');
+    grad.addColorStop(1,   '#1a4030');
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry*0.05, rx, ry, 0, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // 3. Rim/edge stroke
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry*0.05, rx, ry, 0, 0, Math.PI*2);
+    ctx.strokeStyle = '#2a6040';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // 4. Top highlight
+    ctx.beginPath();
+    ctx.ellipse(cx - rx*0.18, cy - ry*0.38, rx*0.35, ry*0.22, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(200,255,180,0.18)';
+    ctx.fill();
+
+  } else if (piece.kind === 'ridgeH') {
+    const dc = piece.dc, dr = piece.dr;
+    // Spans points[dr][dc] -> points[dr+1][dc+3]
+    const cx = (points[dr][dc].x + points[dr][dc+3].x + points[dr+1][dc].x + points[dr+1][dc+3].x) / 4;
+    const cy = (points[dr][dc].y + points[dr][dc+3].y + points[dr+1][dc].y + points[dr+1][dc+3].y) / 4;
+    const width = (points[dr][dc+3].x - points[dr][dc].x + points[dr+1][dc+3].x - points[dr+1][dc].x) / 2;
+    const height = (points[dr+1][dc].y - points[dr][dc].y + points[dr+1][dc+3].y - points[dr][dc+3].y) / 2;
+    const rx = width * 0.46;
+    const ry = height * 0.34;
+
+    // 1. Shadow
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + ry*0.22, rx*1.02, ry*0.28, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(10,25,15,0.4)';
+    ctx.fill();
+
+    // 2. Ridge body with radial gradient
+    const grad = ctx.createRadialGradient(cx, cy - ry*0.3, 0, cx, cy, Math.max(rx, ry));
+    grad.addColorStop(0,   '#90c878');
+    grad.addColorStop(0.5, '#4a8858');
+    grad.addColorStop(1,   '#1e5038');
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry*0.04, rx, ry, 0, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // 3. Stroke
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry*0.04, rx, ry, 0, 0, Math.PI*2);
+    ctx.strokeStyle = '#346848';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // 4. Highlight
+    ctx.beginPath();
+    ctx.ellipse(cx - rx*0.1, cy - ry*0.3, rx*0.5, ry*0.2, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(200,255,180,0.15)';
+    ctx.fill();
+
+  } else if (piece.kind === 'ridgeV') {
+    const dc = piece.dc, dr = piece.dr;
+    // Spans points[dr][dc] -> points[dr+3][dc+1]
+    const cx = (points[dr][dc].x + points[dr][dc+1].x + points[dr+3][dc].x + points[dr+3][dc+1].x) / 4;
+    const cy = (points[dr][dc].y + points[dr][dc+1].y + points[dr+3][dc].y + points[dr+3][dc+1].y) / 4;
+    const width = (points[dr][dc+1].x - points[dr][dc].x + points[dr+3][dc+1].x - points[dr+3][dc].x) / 2;
+    const height = (points[dr+3][dc].y - points[dr][dc].y + points[dr+3][dc+1].y - points[dr][dc+1].y) / 2;
+    const rx = width * 0.34;
+    const ry = height * 0.46;
+
+    // 1. Shadow
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + ry*0.22, rx*1.02, ry*0.28, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(10,25,15,0.4)';
+    ctx.fill();
+
+    // 2. Ridge body with radial gradient
+    const grad = ctx.createRadialGradient(cx, cy - ry*0.3, 0, cx, cy, Math.max(rx, ry));
+    grad.addColorStop(0,   '#90c878');
+    grad.addColorStop(0.5, '#4a8858');
+    grad.addColorStop(1,   '#1e5038');
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry*0.04, rx, ry, 0, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // 3. Stroke
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry*0.04, rx, ry, 0, 0, Math.PI*2);
+    ctx.strokeStyle = '#346848';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // 4. Highlight
+    ctx.beginPath();
+    ctx.ellipse(cx - rx*0.1, cy - ry*0.3, rx*0.5, ry*0.2, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(200,255,180,0.15)';
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle=C.bgDeep; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const {pieces, claimed} = findSpecialPieces();
+
+  // Pass 1: all cells water bg + regular land (skip claimed cells' land/dots/edge)
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const p0=points[r][c],p1=points[r][c+1],p2=points[r+1][c+1],p3=points[r+1][c];
+    const type=getCellType(c,r),cd=cellData[r][c],vr=VARIANTS[cd.v];
+    // water bg always
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath();
+    ctx.fillStyle=C.water; ctx.fill();
+    if(type===0||claimed[r][c]) continue;
+    // regular land
+    ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.fillStyle=vr.land; ctx.fill();
+    // dots
+    ctx.save(); ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.clip();
+    const rng=seededRng(cd.seed);
+    const minX=Math.min(p0.x,p1.x,p2.x,p3.x),maxX=Math.max(p0.x,p1.x,p2.x,p3.x);
+    const minY=Math.min(p0.y,p1.y,p2.y,p3.y),maxY=Math.max(p0.y,p1.y,p2.y,p3.y);
+    ctx.fillStyle=vr.dot;
+    for(let i=0;i<14;i++){ ctx.beginPath(); ctx.arc(minX+rng()*(maxX-minX),minY+rng()*(maxY-minY),1.5+rng()*3,0,Math.PI*2); ctx.fill(); }
+    ctx.restore();
+    ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.strokeStyle=vr.edge; ctx.lineWidth=1.2; ctx.stroke();
+  }
+
+  // Pass 2: special pieces
+  for(const piece of pieces) drawSpecialPiece(piece);
+
+  // Grid overlay
+  ctx.strokeStyle=C.grid; ctx.lineWidth=1;
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const p0=points[r][c],p1=points[r][c+1],p2=points[r+1][c+1],p3=points[r+1][c];
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); ctx.stroke();
+  }
+  for(let r=0;r<=ROWS;r++) for(let c=0;c<=COLS;c++){
+    const pt=points[r][c],on=grid[r][c];
+    ctx.beginPath(); ctx.arc(pt.x,pt.y,on?4:2.5,0,Math.PI*2); ctx.fillStyle=on?C.dotOn:C.dotOff; ctx.fill();
+  }
+}
+
+let painting=false, paintValue=true;
+canvas.addEventListener('mousedown',e=>{
+  painting=true;
+  const rect=canvas.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(canvas.width/rect.width),my=(e.clientY-rect.top)*(canvas.height/rect.height);
+  const pt=nearestPoint(mx,my);
+  if(pt){paintValue=!grid[pt.r][pt.c]; grid[pt.r][pt.c]=paintValue; updateCellData(pt.c,pt.r); render();}
+});
+canvas.addEventListener('mousemove',e=>{
+  if(!painting) return;
+  const rect=canvas.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(canvas.width/rect.width),my=(e.clientY-rect.top)*(canvas.height/rect.height);
+  const pt=nearestPoint(mx,my);
+  if(pt&&grid[pt.r][pt.c]!==paintValue){grid[pt.r][pt.c]=paintValue; updateCellData(pt.c,pt.r); render();}
+});
+window.addEventListener('mouseup',()=>{painting=false;});
+document.getElementById('btn-gen').addEventListener('click',()=>{initState();points=generateOrganic();render();});
+document.getElementById('btn-clear').addEventListener('click',()=>{grid=Array.from({length:ROWS+1},()=>Array(COLS+1).fill(false));render();});
+document.getElementById('btn-rand').addEventListener('click',()=>{
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) cellData[r][c]={v:Math.floor(Math.random()*VARIANTS.length),seed:Math.random()*0xffffffff>>>0};
+  render();
+});
+initState(); points=generateOrganic(); render();
+</script>
+</body>
+</html>
