@@ -82,21 +82,14 @@
 </div>
 <script>
 // ---- Grid sizing ----
+// side steps 1–10, giving 1×1 … 10×10 square faces (cube sphere ready)
 const CELL = 52;
 const JITTER = CELL * 0.38;
-let tileCount = 25; // 1–100
+let side = 5; // default 5×5
 let COLS, ROWS;
 
-function dimsFromCount(n) {
-  const cols = Math.ceil(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
-  return { cols, rows };
-}
-
 function applyDims() {
-  const d = dimsFromCount(tileCount);
-  COLS = d.cols;
-  ROWS = d.rows;
+  COLS = ROWS = side;
 }
 
 // ---- Constants ----
@@ -462,10 +455,9 @@ function generate() {
 
 // ---- Count display ----
 function updateCountDisplay() {
-  const d=dimsFromCount(tileCount);
-  document.getElementById('count-display').textContent=`${tileCount} tile${tileCount!==1?'s':''} (${d.cols}×${d.rows})`;
-  document.getElementById('btn-minus').disabled = tileCount<=1;
-  document.getElementById('btn-plus').disabled  = tileCount>=100;
+  document.getElementById('count-display').textContent=`${side*side} tiles (${side}×${side})`;
+  document.getElementById('btn-minus').disabled = side<=1;
+  document.getElementById('btn-plus').disabled  = side>=10;
 }
 
 // ---- Button handlers ----
@@ -490,15 +482,15 @@ document.getElementById('btn-speed').addEventListener('click', () => {
 });
 
 document.getElementById('btn-minus').addEventListener('click', () => {
-  if (tileCount<=1) return;
-  tileCount--;
+  if (side<=1) return;
+  side--;
   updateCountDisplay();
   generate();
 });
 
 document.getElementById('btn-plus').addEventListener('click', () => {
-  if (tileCount>=100) return;
-  tileCount++;
+  if (side>=10) return;
+  side++;
   updateCountDisplay();
   generate();
 });
