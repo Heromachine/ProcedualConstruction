@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Full Seams — Phase 9</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a141e;
+    color: #c8d8e8;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+  }
+  #menu-link { position:fixed; top:14px; left:16px; color:#7ab4d4; text-decoration:none; font-size:13px; opacity:0.75; transition:opacity 0.15s; }
+  #menu-link:hover { opacity:1; }
+  h1 { font-size:20px; font-weight:600; letter-spacing:0.03em; color:#ddeeff; }
+  .subtitle { font-size:12px; color:#6a8fa8; letter-spacing:0.04em; }
+  #c { border-radius:4px; box-shadow:0 4px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06); display:block; max-width:100%; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  button { background:#1a2d3f; color:#a8c8e0; border:1px solid rgba(255,255,255,0.1); border-radius:5px; padding:6px 16px; font-size:13px; cursor:pointer; transition:background 0.15s, color 0.15s; }
+  button:hover { background:#253d54; color:#ddeeff; }
+  button:disabled { opacity:0.3; cursor:default; }
+  .divider { width:1px; height:22px; background:rgba(255,255,255,0.1); }
+  .tile-count { display:flex; align-items:center; gap:8px; }
+  .tile-count button { padding:6px 13px; font-size:15px; font-weight:600; line-height:1; }
+  #count-display { font-size:13px; color:#a8c8e0; min-width:88px; text-align:center; letter-spacing:0.02em; }
+  #status { font-size:11px; color:#5a8aaa; letter-spacing:0.04em; min-width:320px; text-align:center; }
+  .legends { display:flex; gap:24px; flex-wrap:wrap; justify-content:center; }
+  .legend { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:11px; color:#7a9ab0; }
+  .legend-label { font-size:10px; color:#4a6a80; letter-spacing:1.5px; text-transform:uppercase; }
+  .legend-item { display:flex; align-items:center; gap:5px; }
+  .legend-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .legend-line { width:20px; height:2px; flex-shrink:0; }
+</style>
+</head>
+<body>
+<a href="index.html" id="menu-link">&#8592; Menu</a>
+<h1>Full Seams &#8212; Phase 9</h1>
+<p class="subtitle">All 12 cube edges constrained &middot; cube sphere ready</p>
+<canvas id="c"></canvas>
+<div class="controls">
+  <button id="btn-gen">Generate</button>
+  <div class="divider"></div>
+  <div class="tile-count">
+    <button id="btn-minus">&#8722;</button>
+    <span id="count-display">25 tiles (5&times;5)</span>
+    <button id="btn-plus">&#43;</button>
+  </div>
+</div>
+<span id="status">Press Generate to start</span>
+<div class="legends">
+  <div class="legend">
+    <span class="legend-label">Terrain</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#1a4d72"></div>water</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2d7a4f"></div>forest</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#6a7a30"></div>scrub</div>
+  </div>
+  <div class="legend">
+    <span class="legend-label">Polar</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#0e2d45"></div>ice water</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#dce8f4"></div>snow</div>
+  </div>
+  <div class="legend">
+    <span class="legend-label">Seams</span>
+    <div class="legend-item"><div class="legend-line" style="background:rgba(255,200,60,0.8)"></div>shared edge</div>
+    <div class="legend-item"><div class="legend-line" style="background:rgba(255,255,255,0.15)"></div>free edge</div>
+  </div>
+</div>
+
+<script>
+// ---- Cube net layout ----
+//         [Top]         gridCol=1, gridRow=0  (polar/snow)
+// [Left] [Front] [Right] [Back]   gridRow=1  (terrain)
+//        [Bottom]        gridCol=1, gridRow=2  (polar/snow)
+//
+// All 12 cube edges are constrained:
+//  1.  F.right  ↔ R.left      F[r][COLS]  = R[r][0]
+//  2.  R.right  ↔ B.left      R[r][COLS]  = B[r][0]
+//  3.  B.right  ↔ L.left      B[r][COLS]  = L[r][0]
+//  4.  L.right  ↔ F.left      L[r][COLS]  = F[r][0]
+//  5.  T.bottom ↔ F.top       T[ROWS][c]  = F[0][c]
+//  6.  Bo.top   ↔ F.bottom    Bo[0][c]    = F[ROWS][c]
+//  7.  T.top    ↔ B.top (rev) T[0][c]     = B[0][COLS-c]
+//  8.  Bo.bot   ↔ B.bot (rev) Bo[ROWS][c] = B[ROWS][COLS-c]
+//  9.  T.left   ↔ L.top (rot) T[r][0]     = L[0][r]
+// 10.  T.right  ↔ R.top(rot+rev) T[r][COLS] = R[0][COLS-r]
+// 11.  Bo.left  ↔ L.bot(rot+rev) Bo[r][0]  = L[ROWS][COLS-r]
+// 12.  Bo.right ↔ R.bot (rot) Bo[r][COLS] = R[ROWS][r]
+//
+// Generation order:
+//   Phase 0 — Front (anchor, no constraints — all borders water)
+//   Phase 1 — Top / Left / Right / Bottom  (3 edges each from Front + corner edges)
+//   Phase 2 — Back  (all 4 edges inherited)
+
+const FACE_DEFS = [
+  { id:'top',    label:'North Pole', gridCol:1, gridRow:0, polar:true  },
+  { id:'left',   label:'Left',       gridCol:0, gridRow:1, polar:false },
+  { id:'front',  label:'Front',      gridCol:1, gridRow:1, polar:false },
+  { id:'right',  label:'Right',      gridCol:2, gridRow:1, polar:false },
+  { id:'back',   label:'Back',       gridCol:3, gridRow:1, polar:false },
+  { id:'bottom', label:'South Pole', gridCol:1, gridRow:2, polar:true  },
+];
+
+// ---- Sizing ----
+const JITTER_RATIO = 0.38;
+const GAP = 6;
+const LABEL_H = 20;
+let side = 5;
+let COLS, ROWS, CELL, JITTER, faceSize;
+
+function applyDims() {
+  COLS = ROWS = side;
+  CELL = Math.max(18, Math.floor(200 / side));
+  JITTER = CELL * JITTER_RATIO;
+  faceSize = side * CELL;
+}
+
+// ---- Palettes ----
+const C_TERRAIN = {
+  bgDeep:'#0d1e2d', water:'#1a4d72',
+  dotOff:'rgba(80,160,220,0.35)', dotOn:'rgba(255,210,80,0.95)',
+  grid:'rgba(255,255,255,0.05)', border:'rgba(80,160,220,0.18)',
+  ghost_land:'rgba(80,180,120,', ghost_water:'rgba(40,80,180,',
+};
+const C_POLAR = {
+  bgDeep:'#0a1820', water:'#0e2d45',
+  dotOff:'rgba(160,200,235,0.40)', dotOn:'rgba(220,240,255,0.95)',
+  grid:'rgba(255,255,255,0.06)', border:'rgba(160,210,240,0.25)',
+  ghost_land:'rgba(180,220,250,', ghost_water:'rgba(40,80,130,',
+};
+const TERRAIN_VARIANTS = [
+  { land:'#2d7a4f', edge:'#3d9960', dot:'rgba(130,220,100,0.22)' },
+  { land:'#5a9040', edge:'#72b050', dot:'rgba(190,240,90,0.28)'  },
+  { land:'#1f5e40', edge:'#286850', dot:'rgba(80,190,130,0.20)'  },
+  { land:'#6a7a30', edge:'#828f40', dot:'rgba(210,210,70,0.24)'  },
+];
+const POLAR_VARIANTS = [
+  { land:'#dce8f4', edge:'#b8cfe0', dot:'rgba(200,230,255,0.30)' },
+  { land:'#e4eef8', edge:'#c0d4e8', dot:'rgba(220,240,255,0.25)' },
+  { land:'#c8dae8', edge:'#a8c0d4', dot:'rgba(180,210,240,0.35)' },
+  { land:'#ccd8e0', edge:'#aabcca', dot:'rgba(190,215,235,0.28)' },
+];
+
+// ---- State ----
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let faces = [];
+let wfcAnimId = null;
+let wfcSpeed = 8;
+let genPhase = 0;
+
+// Pre-computed corner edges (edges 9-12)
+let edgeTL, edgeTR, edgeBL, edgeBR;
+
+function getFace(id) { return faces.find(f => f.id === id); }
+
+// ---- Canvas ----
+function resizeCanvas() {
+  canvas.width  = 4 * faceSize + 3 * GAP;
+  canvas.height = 3 * (faceSize + LABEL_H) + 2 * GAP;
+}
+
+function faceOrigin(f) {
+  return {
+    x: f.gridCol * (faceSize + GAP),
+    y: f.gridRow * (faceSize + LABEL_H + GAP) + LABEL_H,
+  };
+}
+
+// ---- Core helpers ----
+function seededRng(seed) {
+  let s = (seed ^ 0xdeadbeef) >>> 0 || 1;
+  return () => { s^=s<<13; s^=s>>17; s^=s<<5; return (s>>>0)/0xFFFFFFFF; };
+}
+function midpt(a,b) { return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+
+function getCellType(face, col, row) {
+  const g=face.grid; let t=0;
+  if(g[row][col])     t|=8;
+  if(g[row][col+1])   t|=4;
+  if(g[row+1][col+1]) t|=2;
+  if(g[row+1][col])   t|=1;
+  return t;
+}
+
+function buildQuadPath(ctx, type, p0, p1, p2, p3) {
+  const m01=midpt(p0,p1), m12=midpt(p1,p2), m23=midpt(p2,p3), m30=midpt(p3,p0);
+  switch(type) {
+    case 0:  break;
+    case 15: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+    case 8:  ctx.moveTo(m01.x,m01.y); ctx.quadraticCurveTo(p0.x,p0.y,m30.x,m30.y); ctx.closePath(); break;
+    case 4:  ctx.moveTo(m12.x,m12.y); ctx.quadraticCurveTo(p1.x,p1.y,m01.x,m01.y); ctx.closePath(); break;
+    case 2:  ctx.moveTo(m23.x,m23.y); ctx.quadraticCurveTo(p2.x,p2.y,m12.x,m12.y); ctx.closePath(); break;
+    case 1:  ctx.moveTo(m30.x,m30.y); ctx.quadraticCurveTo(p3.x,p3.y,m23.x,m23.y); ctx.closePath(); break;
+    case 12: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(m12.x,m12.y); ctx.quadraticCurveTo(m23.x,m23.y,m30.x,m30.y); ctx.closePath(); break;
+    case 6:  ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(m23.x,m23.y); ctx.quadraticCurveTo(m30.x,m30.y,m01.x,m01.y); ctx.closePath(); break;
+    case 3:  ctx.moveTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.lineTo(m30.x,m30.y); ctx.quadraticCurveTo(m01.x,m01.y,m12.x,m12.y); ctx.closePath(); break;
+    case 9:  ctx.moveTo(p3.x,p3.y); ctx.lineTo(p0.x,p0.y); ctx.lineTo(m01.x,m01.y); ctx.quadraticCurveTo(m12.x,m12.y,m23.x,m23.y); ctx.closePath(); break;
+    case 10: ctx.moveTo(m01.x,m01.y); ctx.quadraticCurveTo(p0.x,p0.y,m30.x,m30.y); ctx.closePath(); ctx.moveTo(m23.x,m23.y); ctx.quadraticCurveTo(p2.x,p2.y,m12.x,m12.y); ctx.closePath(); break;
+    case 5:  ctx.moveTo(m12.x,m12.y); ctx.quadraticCurveTo(p1.x,p1.y,m01.x,m01.y); ctx.closePath(); ctx.moveTo(m30.x,m30.y); ctx.quadraticCurveTo(p3.x,p3.y,m23.x,m23.y); ctx.closePath(); break;
+    case 14: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(m23.x,m23.y); ctx.quadraticCurveTo(p3.x,p3.y,m30.x,m30.y); ctx.closePath(); break;
+    case 13: ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(m12.x,m12.y); ctx.quadraticCurveTo(p2.x,p2.y,m23.x,m23.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+    case 11: ctx.moveTo(p0.x,p0.y); ctx.lineTo(m01.x,m01.y); ctx.quadraticCurveTo(p1.x,p1.y,m12.x,m12.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+    case 7:  ctx.moveTo(m30.x,m30.y); ctx.quadraticCurveTo(p0.x,p0.y,m01.x,m01.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); break;
+  }
+}
+
+function generateOrganic() {
+  const pts = Array.from({length:ROWS+1}, (_,r) =>
+    Array.from({length:COLS+1}, (_,c) => {
+      const onBorder = r===0||r===ROWS||c===0||c===COLS;
+      return {
+        x: c*CELL + (onBorder ? 0 : (Math.random()-0.5)*JITTER*2),
+        y: r*CELL + (onBorder ? 0 : (Math.random()-0.5)*JITTER*2),
+      };
+    })
+  );
+  for (let iter=0;iter<5;iter++)
+    for (let r=1;r<ROWS;r++) for (let c=1;c<COLS;c++)
+      pts[r][c] = {
+        x: (pts[r-1][c].x+pts[r+1][c].x+pts[r][c-1].x+pts[r][c+1].x)/4,
+        y: (pts[r-1][c].y+pts[r+1][c].y+pts[r][c-1].y+pts[r][c+1].y)/4,
+      };
+  return pts;
+}
+
+function updateCellData(face, pgCol, pgRow) {
+  const V = face.polar ? POLAR_VARIANTS : TERRAIN_VARIANTS;
+  for (const [cr,cc] of [[pgRow-1,pgCol-1],[pgRow-1,pgCol],[pgRow,pgCol-1],[pgRow,pgCol]])
+    if (cr>=0&&cr<ROWS&&cc>=0&&cc<COLS)
+      face.cellData[cr][cc] = { v:Math.floor(Math.random()*V.length), seed:Math.random()*0xffffffff>>>0 };
+}
+
+// ---- Edge extraction helpers ----
+function getTopEdge(face)    { return face.grid[0].slice(); }
+function getBottomEdge(face) { return face.grid[ROWS].slice(); }
+function getLeftEdge(face)   { return Array.from({length:ROWS+1}, (_,r) => face.grid[r][0]); }
+function getRightEdge(face)  { return Array.from({length:ROWS+1}, (_,r) => face.grid[r][COLS]); }
+function reverseEdge(arr)    { return arr.slice().reverse(); }
+
+// ---- Corner edge pre-computation ----
+// Endpoints must be false (water) to avoid conflicts with water-pinned free corners.
+// These solve edges 9-12: the cross-net connections between Top/Bottom and Left/Right.
+//   edgeTL: T[r][0]    = edgeTL[r],  L[0][c]      = edgeTL[c]
+//   edgeTR: T[r][COLS] = edgeTR[r],  R[0][c]      = edgeTR[COLS-c]
+//   edgeBL: Bo[r][0]   = edgeBL[r],  L[ROWS][c]   = edgeBL[COLS-c]
+//   edgeBR: Bo[r][COLS]= edgeBR[r],  R[ROWS][c]   = edgeBR[c]
+function randomCornerEdge() {
+  const e = Array.from({length:ROWS+1}, () => Math.random() < 0.55);
+  e[0] = false; e[ROWS] = false;
+  return e;
+}
+
+// ---- Special pieces (terrain only) ----
+function findSpecialPieces(face) {
+  const claimed = Array.from({length:ROWS}, ()=>Array(COLS).fill(false));
+  const pieces = [];
+  if (face.polar) return {pieces, claimed};
+  for (let r=0;r<=ROWS-2;r++) for (let c=0;c<=COLS-2;c++) {
+    if (claimed[r][c]||claimed[r][c+1]||claimed[r+1][c]||claimed[r+1][c+1]) continue;
+    if ([getCellType(face,c,r),getCellType(face,c+1,r),getCellType(face,c,r+1),getCellType(face,c+1,r+1)].every(t=>t===15)) {
+      pieces.push({kind:'mountain',dc:c,dr:r});
+      claimed[r][c]=claimed[r][c+1]=claimed[r+1][c]=claimed[r+1][c+1]=true;
+    }
+  }
+  for (let r=0;r<ROWS;r++) for (let c=0;c<=COLS-3;c++) {
+    if (claimed[r][c]||claimed[r][c+1]||claimed[r][c+2]) continue;
+    if ([getCellType(face,c,r),getCellType(face,c+1,r),getCellType(face,c+2,r)].every(t=>t===15)) {
+      pieces.push({kind:'ridgeH',dc:c,dr:r});
+      claimed[r][c]=claimed[r][c+1]=claimed[r][c+2]=true;
+    }
+  }
+  for (let r=0;r<=ROWS-3;r++) for (let c=0;c<COLS;c++) {
+    if (claimed[r][c]||claimed[r+1][c]||claimed[r+2][c]) continue;
+    if ([getCellType(face,c,r),getCellType(face,c,r+1),getCellType(face,c,r+2)].every(t=>t===15)) {
+      pieces.push({kind:'ridgeV',dc:c,dr:r});
+      claimed[r][c]=claimed[r+1][c]=claimed[r+2][c]=true;
+    }
+  }
+  return {pieces, claimed};
+}
+
+function drawSpecialPiece(face, piece) {
+  const pts=face.points;
+  ctx.save();
+  if (piece.kind==='mountain') {
+    const dc=piece.dc,dr=piece.dr;
+    const cx=pts[dr+1][dc+1].x,cy=pts[dr+1][dc+1].y;
+    const w=((pts[dr][dc+2].x-pts[dr][dc].x)+(pts[dr+2][dc+2].x-pts[dr+2][dc].x))/2;
+    const h=((pts[dr+2][dc].y-pts[dr][dc].y)+(pts[dr+2][dc+2].y-pts[dr][dc+2].y))/2;
+    const rx=w*0.44,ry=h*0.40;
+    ctx.beginPath(); ctx.ellipse(cx,cy+ry*0.25,rx*1.05,ry*0.3,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(10,25,15,0.5)'; ctx.fill();
+    const g=ctx.createRadialGradient(cx-rx*0.2,cy-ry*0.35,0,cx,cy,Math.max(rx,ry));
+    g.addColorStop(0,'#7ab870'); g.addColorStop(0.45,'#3a7850'); g.addColorStop(1,'#1a4030');
+    ctx.beginPath(); ctx.ellipse(cx,cy-ry*0.05,rx,ry,0,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx,cy-ry*0.05,rx,ry,0,0,Math.PI*2); ctx.strokeStyle='#2a6040'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx-rx*0.18,cy-ry*0.38,rx*0.35,ry*0.22,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(200,255,180,0.18)'; ctx.fill();
+  } else {
+    const dc=piece.dc,dr=piece.dr,isH=piece.kind==='ridgeH';
+    const x3=isH?dc+3:dc+1,y3=isH?dr+1:dr+3;
+    const cx=(pts[dr][dc].x+pts[dr][x3].x+pts[y3][dc].x+pts[y3][x3].x)/4;
+    const cy=(pts[dr][dc].y+pts[dr][x3].y+pts[y3][dc].y+pts[y3][x3].y)/4;
+    const w=(pts[dr][x3].x-pts[dr][dc].x+pts[y3][x3].x-pts[y3][dc].x)/2;
+    const h=(pts[y3][dc].y-pts[dr][dc].y+pts[y3][x3].y-pts[dr][x3].y)/2;
+    const rx=w*(isH?0.46:0.34),ry=h*(isH?0.34:0.46);
+    ctx.beginPath(); ctx.ellipse(cx,cy+ry*0.22,rx*1.02,ry*0.28,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(10,25,15,0.4)'; ctx.fill();
+    const g=ctx.createRadialGradient(cx,cy-ry*0.3,0,cx,cy,Math.max(rx,ry));
+    g.addColorStop(0,'#90c878'); g.addColorStop(0.5,'#4a8858'); g.addColorStop(1,'#1e5038');
+    ctx.beginPath(); ctx.ellipse(cx,cy-ry*0.04,rx,ry,0,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx,cy-ry*0.04,rx,ry,0,0,Math.PI*2); ctx.strokeStyle='#346848'; ctx.lineWidth=1.2; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx-rx*0.1,cy-ry*0.3,rx*0.5,ry*0.2,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(200,255,180,0.15)'; ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---- Shared edge highlight ----
+function drawSharedEdges(face) {
+  const se = face.sharedEdges;
+  if (!se) return;
+  const gold = 'rgba(255,200,60,0.75)';
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = gold;
+  if (se.top)    { ctx.beginPath(); ctx.moveTo(0,0);        ctx.lineTo(faceSize,0);        ctx.stroke(); }
+  if (se.bottom) { ctx.beginPath(); ctx.moveTo(0,faceSize);  ctx.lineTo(faceSize,faceSize);  ctx.stroke(); }
+  if (se.left)   { ctx.beginPath(); ctx.moveTo(0,0);        ctx.lineTo(0,faceSize);        ctx.stroke(); }
+  if (se.right)  { ctx.beginPath(); ctx.moveTo(faceSize,0);  ctx.lineTo(faceSize,faceSize);  ctx.stroke(); }
+}
+
+// ---- Render helpers ----
+function drawFaceContent(face, useWFC) {
+  const C = face.polar ? C_POLAR : C_TERRAIN;
+  const V = face.polar ? POLAR_VARIANTS : TERRAIN_VARIANTS;
+  ctx.fillStyle=C.bgDeep; ctx.fillRect(0,0,faceSize,faceSize);
+
+  const {pieces, claimed} = useWFC ? {pieces:[],claimed:Array.from({length:ROWS},()=>Array(COLS).fill(false))} : findSpecialPieces(face);
+
+  for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+    const p0=face.points[r][c],p1=face.points[r][c+1],p2=face.points[r+1][c+1],p3=face.points[r+1][c];
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath();
+    ctx.fillStyle=C.water; ctx.fill();
+
+    if (useWFC) {
+      const allC=face.wfcCollapsed[r][c]&&face.wfcCollapsed[r][c+1]&&face.wfcCollapsed[r+1][c+1]&&face.wfcCollapsed[r+1][c];
+      if (allC) {
+        const type=getCellType(face,c,r);
+        if (type!==0) {
+          const cd=face.cellData[r][c],vr=V[cd.v];
+          ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.fillStyle=vr.land; ctx.fill();
+          ctx.save(); ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.clip();
+          const rng=seededRng(cd.seed);
+          const minX=Math.min(p0.x,p1.x,p2.x,p3.x),maxX=Math.max(p0.x,p1.x,p2.x,p3.x);
+          const minY=Math.min(p0.y,p1.y,p2.y,p3.y),maxY=Math.max(p0.y,p1.y,p2.y,p3.y);
+          ctx.fillStyle=vr.dot;
+          for(let i=0;i<14;i++){ctx.beginPath();ctx.arc(minX+rng()*(maxX-minX),minY+rng()*(maxY-minY),1.5+rng()*3,0,Math.PI*2);ctx.fill();}
+          ctx.restore();
+          ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.strokeStyle=vr.edge; ctx.lineWidth=1.2; ctx.stroke();
+        }
+      } else {
+        let wSum=0,wCount=0;
+        [[r,c],[r,c+1],[r+1,c],[r+1,c+1]].forEach(([rr,cc])=>{
+          if(!face.wfcCollapsed[rr][cc]){wSum+=face.wfcWeights[rr][cc];wCount++;}
+        });
+        const avgW=wCount>0?wSum/wCount:(face.wfcWeights[r][c]+face.wfcWeights[r][c+1]+face.wfcWeights[r+1][c]+face.wfcWeights[r+1][c+1])/4;
+        const alpha=avgW>0.5?(avgW-0.5)*2*0.35:(0.5-avgW)*2*0.20;
+        const gc=avgW>0.5?C.ghost_land:C.ghost_water;
+        ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath();
+        ctx.fillStyle=gc+alpha.toFixed(3)+')'; ctx.fill();
+      }
+    } else {
+      const type=getCellType(face,c,r),cd=face.cellData[r][c],vr=V[cd.v];
+      if (type===0||claimed[r][c]) continue;
+      ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.fillStyle=vr.land; ctx.fill();
+      ctx.save(); ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.clip();
+      const rng=seededRng(cd.seed);
+      const minX=Math.min(p0.x,p1.x,p2.x,p3.x),maxX=Math.max(p0.x,p1.x,p2.x,p3.x);
+      const minY=Math.min(p0.y,p1.y,p2.y,p3.y),maxY=Math.max(p0.y,p1.y,p2.y,p3.y);
+      ctx.fillStyle=vr.dot;
+      for(let i=0;i<14;i++){ctx.beginPath();ctx.arc(minX+rng()*(maxX-minX),minY+rng()*(maxY-minY),1.5+rng()*3,0,Math.PI*2);ctx.fill();}
+      ctx.restore();
+      ctx.beginPath(); buildQuadPath(ctx,type,p0,p1,p2,p3); ctx.strokeStyle=vr.edge; ctx.lineWidth=1.2; ctx.stroke();
+    }
+  }
+  if (!useWFC) for (const piece of pieces) drawSpecialPiece(face, piece);
+
+  ctx.strokeStyle=C.grid; ctx.lineWidth=1;
+  for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+    const p0=face.points[r][c],p1=face.points[r][c+1],p2=face.points[r+1][c+1],p3=face.points[r+1][c];
+    ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.lineTo(p3.x,p3.y); ctx.closePath(); ctx.stroke();
+  }
+  for (let r=0;r<=ROWS;r++) for (let c=0;c<=COLS;c++) {
+    const pt=face.points[r][c];
+    ctx.beginPath();
+    if (!useWFC || face.wfcCollapsed[r][c]) {
+      const on = face.grid[r][c];
+      ctx.arc(pt.x,pt.y,on?4:2.5,0,Math.PI*2);
+      ctx.fillStyle=on?(face.polar?C_POLAR.dotOn:C_TERRAIN.dotOn):(face.polar?C_POLAR.dotOff:C_TERRAIN.dotOff);
+    } else {
+      ctx.arc(pt.x,pt.y,2,0,Math.PI*2);
+      ctx.fillStyle='rgba(140,100,200,0.6)';
+    }
+    ctx.fill();
+  }
+
+  ctx.strokeStyle=C.border; ctx.lineWidth=1.5;
+  ctx.strokeRect(0.75,0.75,faceSize-1.5,faceSize-1.5);
+  drawSharedEdges(face);
+}
+
+function renderFace(face) {
+  const {x:ox,y:oy}=faceOrigin(face);
+  ctx.save(); ctx.translate(ox,oy);
+  drawFaceContent(face, false);
+  ctx.restore();
+}
+
+function renderWFCFace(face) {
+  const {x:ox,y:oy}=faceOrigin(face);
+  ctx.save(); ctx.translate(ox,oy);
+  drawFaceContent(face, true);
+  ctx.restore();
+}
+
+// ---- Pending face placeholder ----
+function renderPendingFace(face) {
+  const {x:ox,y:oy}=faceOrigin(face);
+  ctx.save(); ctx.translate(ox,oy);
+  ctx.fillStyle = face.polar ? '#0a1820' : '#0d1e2d';
+  ctx.fillRect(0,0,faceSize,faceSize);
+  ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=1.5;
+  ctx.strokeRect(0.75,0.75,faceSize-1.5,faceSize-1.5);
+  ctx.fillStyle='rgba(255,255,255,0.08)';
+  ctx.font=`${Math.max(10, CELL*0.4)}px Segoe UI, sans-serif`;
+  ctx.textAlign='center';
+  ctx.fillText('waiting\u2026', faceSize/2, faceSize/2+4);
+  ctx.restore();
+}
+
+// ---- Labels ----
+function drawLabels() {
+  ctx.font='11px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign='center';
+  for (const face of faces) {
+    const {x:ox}=faceOrigin(face);
+    const ly = face.gridRow*(faceSize+LABEL_H+GAP)+LABEL_H-6;
+    ctx.fillStyle = face.polar ? 'rgba(160,210,240,0.75)' : 'rgba(120,180,220,0.5)';
+    ctx.fillText(face.label, ox+faceSize/2, ly);
+  }
+}
+
+function renderAll() {
+  ctx.fillStyle='#080f16';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  drawLabels();
+  for (const face of faces) {
+    if (!face.wfcCollapsed) { renderPendingFace(face); continue; }
+    face.wfcDone ? renderFace(face) : renderWFCFace(face);
+  }
+}
+
+// ---- WFC ----
+function propagateWFC(face, r, c, value) {
+  for (const [nr,nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
+    if (nr<0||nr>ROWS||nc<0||nc>COLS||face.wfcCollapsed[nr][nc]) continue;
+    face.wfcWeights[nr][nc] = value
+      ? Math.min(0.91, face.wfcWeights[nr][nc]+0.24*(1-face.wfcWeights[nr][nc]))
+      : Math.max(0.09, face.wfcWeights[nr][nc]*0.76);
+  }
+  for (const [nr,nc] of [[r-1,c-1],[r-1,c+1],[r+1,c-1],[r+1,c+1]]) {
+    if (nr<0||nr>ROWS||nc<0||nc>COLS||face.wfcCollapsed[nr][nc]) continue;
+    face.wfcWeights[nr][nc] = value
+      ? Math.min(0.88, face.wfcWeights[nr][nc]+0.12*(1-face.wfcWeights[nr][nc]))
+      : Math.max(0.12, face.wfcWeights[nr][nc]*0.88);
+  }
+}
+
+// edges = { top?, bottom?, left?, right? } each an array of booleans (length COLS+1 or ROWS+1)
+function initFace(face, edges) {
+  edges = edges || {};
+  face.grid     = Array.from({length:ROWS+1}, ()=>Array(COLS+1).fill(false));
+  face.cellData = Array.from({length:ROWS},   ()=>
+    Array.from({length:COLS}, ()=>({v:Math.floor(Math.random()*4), seed:Math.random()*0xffffffff>>>0}))
+  );
+  face.wfcWeights   = Array.from({length:ROWS+1}, ()=>Array(COLS+1).fill(0.5));
+  face.wfcCollapsed = Array.from({length:ROWS+1}, ()=>Array(COLS+1).fill(false));
+  face.wfcDone = false;
+
+  // Step 1: Pin ALL borders to water (false, collapsed=true, weight=0)
+  for (let c=0;c<=COLS;c++) {
+    face.wfcCollapsed[0][c]=face.wfcCollapsed[ROWS][c]=true;
+    face.wfcWeights[0][c]=face.wfcWeights[ROWS][c]=0;
+  }
+  for (let r=0;r<=ROWS;r++) {
+    face.wfcCollapsed[r][0]=face.wfcCollapsed[r][COLS]=true;
+    face.wfcWeights[r][0]=face.wfcWeights[r][COLS]=0;
+  }
+
+  // Step 2: Override border cells with inherited edge constraints
+  if (edges.top)    for (let c=0;c<=COLS;c++) { face.grid[0][c]=edges.top[c];       face.wfcWeights[0][c]=edges.top[c]?1:0; }
+  if (edges.bottom) for (let c=0;c<=COLS;c++) { face.grid[ROWS][c]=edges.bottom[c]; face.wfcWeights[ROWS][c]=edges.bottom[c]?1:0; }
+  if (edges.left)   for (let r=0;r<=ROWS;r++) { face.grid[r][0]=edges.left[r];      face.wfcWeights[r][0]=edges.left[r]?1:0; }
+  if (edges.right)  for (let r=0;r<=ROWS;r++) { face.grid[r][COLS]=edges.right[r];  face.wfcWeights[r][COLS]=edges.right[r]?1:0; }
+
+  // Step 3: Center-bias for interior points
+  const cR=ROWS/2, cC=COLS/2, maxD=Math.sqrt(cR*cR+cC*cC);
+  for (let r=1;r<ROWS;r++) for (let c=1;c<COLS;c++) {
+    const d=Math.sqrt((r-cR)**2+(c-cC)**2);
+    face.wfcWeights[r][c] = face.polar
+      ? Math.max(0.6, 0.94-(d/maxD)*0.30)
+      : Math.max(0.12, 0.82-(d/maxD)*0.72);
+  }
+
+  // Step 4: Propagate WFC from all border points to bias interior
+  for (let c=0;c<=COLS;c++) {
+    propagateWFC(face, 0,    c, face.grid[0][c]);
+    propagateWFC(face, ROWS, c, face.grid[ROWS][c]);
+  }
+  for (let r=1;r<ROWS;r++) {
+    propagateWFC(face, r, 0,    face.grid[r][0]);
+    propagateWFC(face, r, COLS, face.grid[r][COLS]);
+  }
+
+  // Step 5: Seed center as land (if not already collapsed by a border)
+  const sr=Math.round(ROWS/2), sc=Math.round(COLS/2);
+  if (!face.wfcCollapsed[sr][sc]) {
+    face.wfcCollapsed[sr][sc]=true; face.grid[sr][sc]=true;
+    updateCellData(face,sc,sr);
+    propagateWFC(face,sr,sc,true);
+  }
+}
+
+function collapseOneFace(face) {
+  let best=null, bestScore=-1;
+  for (let r=1;r<ROWS;r++) for (let c=1;c<COLS;c++) {
+    if (face.wfcCollapsed[r][c]) continue;
+    const score=Math.abs(face.wfcWeights[r][c]-0.5)+Math.random()*0.015;
+    if (score>bestScore){bestScore=score;best={r,c};}
+  }
+  if (!best){face.wfcDone=true;return;}
+  const {r,c}=best;
+  face.grid[r][c]=Math.random()<face.wfcWeights[r][c];
+  face.wfcCollapsed[r][c]=true;
+  updateCellData(face,c,r);
+  propagateWFC(face,r,c,face.grid[r][c]);
+  let remaining=0;
+  for (let rr=1;rr<ROWS;rr++) for (let cc=1;cc<COLS;cc++) if(!face.wfcCollapsed[rr][cc]) remaining++;
+  if (remaining===0) face.wfcDone=true;
+}
+
+// ---- Animation (3-phase generation) ----
+function tick() {
+
+  // ---- Phase 0: Front (anchor) ----
+  if (genPhase === 0) {
+    const front = getFace('front');
+    for (let i=0; i<wfcSpeed; i++) { if (front.wfcDone) break; collapseOneFace(front); }
+    renderAll();
+    document.getElementById('status').textContent = 'Phase 1 of 3 \u2014 generating Front (anchor)\u2026';
+    if (!front.wfcDone) { wfcAnimId = requestAnimationFrame(tick); return; }
+
+    // Front done — mark front seams and init Top/Left/Right/Bottom with inherited edges + corner edges
+    const f = getFace('front');
+    f.sharedEdges = { top:true, bottom:true, left:true, right:true };
+
+    const t  = getFace('top');
+    const l  = getFace('left');
+    const r  = getFace('right');
+    const bo = getFace('bottom');
+
+    // Top: bottom=F.top (edge 5), left=edgeTL (edge 9), right=edgeTR (edge 10)
+    initFace(t, {
+      bottom: getTopEdge(f),
+      left:   edgeTL,
+      right:  edgeTR,
+    });
+    t.sharedEdges = { top:true, bottom:true, left:true, right:true };
+
+    // Left: right=F.left (edge 4), top=edgeTL (edge 9), bottom=reversed edgeBL (edge 11)
+    initFace(l, {
+      right:  getLeftEdge(f),
+      top:    edgeTL,
+      bottom: reverseEdge(edgeBL),
+    });
+    l.sharedEdges = { top:true, bottom:true, left:true, right:true };
+
+    // Right: left=F.right (edge 1), top=reversed edgeTR (edge 10), bottom=edgeBR (edge 12)
+    initFace(r, {
+      left:   getRightEdge(f),
+      top:    reverseEdge(edgeTR),
+      bottom: edgeBR,
+    });
+    r.sharedEdges = { top:true, bottom:true, left:true, right:true };
+
+    // Bottom: top=F.bottom (edge 6), left=edgeBL (edge 11), right=edgeBR (edge 12)
+    initFace(bo, {
+      top:   getBottomEdge(f),
+      left:  edgeBL,
+      right: edgeBR,
+    });
+    bo.sharedEdges = { top:true, bottom:true, left:true, right:true };
+
+    genPhase = 1;
+    wfcAnimId = requestAnimationFrame(tick);
+    return;
+  }
+
+  // ---- Phase 1: Top / Left / Right / Bottom in parallel ----
+  if (genPhase === 1) {
+    const p1 = ['top','left','right','bottom'].map(id => getFace(id));
+    let anyActive = false;
+    for (const face of p1) {
+      if (!face.wfcDone) {
+        for (let i=0; i<wfcSpeed; i++) { if (face.wfcDone) break; collapseOneFace(face); }
+        anyActive = true;
+      }
+    }
+    renderAll();
+    const done = p1.filter(f => f.wfcDone).length;
+    document.getElementById('status').textContent =
+      `Phase 2 of 3 \u2014 Top / Left / Right / Bottom (3 edges each)\u2026 ${done}/4 done`;
+    if (anyActive) { wfcAnimId = requestAnimationFrame(tick); return; }
+
+    // Phase 1 done — init Back with all 4 edges (edges 2, 3, 7, 8)
+    const bk = getFace('back');
+    const top  = getFace('top');
+    const left = getFace('left');
+    const right= getFace('right');
+    const bot  = getFace('bottom');
+
+    // Back.left  = R.right  (edge 2)
+    // Back.right = L.left   (edge 3)
+    // Back.top   = reversed T.top   (edge 7: T[0][c] = B[0][COLS-c], so Back.top[c] = T.top[COLS-c])
+    // Back.bottom= reversed Bo.bottom (edge 8: Bo[ROWS][c] = B[ROWS][COLS-c], so Back.bottom[c] = Bo.bottom[COLS-c])
+    initFace(bk, {
+      left:   getRightEdge(right),
+      right:  getLeftEdge(left),
+      top:    reverseEdge(getTopEdge(top)),
+      bottom: reverseEdge(getBottomEdge(bot)),
+    });
+    bk.sharedEdges = { top:true, bottom:true, left:true, right:true };
+
+    genPhase = 2;
+    wfcAnimId = requestAnimationFrame(tick);
+    return;
+  }
+
+  // ---- Phase 2: Back ----
+  if (genPhase === 2) {
+    const back = getFace('back');
+    for (let i=0; i<wfcSpeed; i++) { if (back.wfcDone) break; collapseOneFace(back); }
+    renderAll();
+    document.getElementById('status').textContent =
+      'Phase 3 of 3 \u2014 generating Back (all 4 edges inherited)\u2026';
+    if (!back.wfcDone) { wfcAnimId = requestAnimationFrame(tick); return; }
+
+    document.getElementById('status').textContent =
+      'All 6 faces complete \u00b7 all 12 cube edges seamed \u00b7 cube sphere ready';
+  }
+}
+
+// ---- Generate ----
+function generate() {
+  if (wfcAnimId) cancelAnimationFrame(wfcAnimId);
+  wfcAnimId = null;
+  genPhase = 0;
+  applyDims();
+  resizeCanvas();
+
+  // Pre-compute the 4 corner edges (solve cross-net seams 9-12)
+  edgeTL = randomCornerEdge();
+  edgeTR = randomCornerEdge();
+  edgeBL = randomCornerEdge();
+  edgeBR = randomCornerEdge();
+
+  // Create all face objects with organic points but no WFC state yet (pending)
+  faces = FACE_DEFS.map(def => ({ ...def, points:generateOrganic(), wfcCollapsed:null }));
+
+  // Init only Front to start (phase 0 anchor — no inherited edges, all borders water)
+  initFace(getFace('front'), {});
+
+  renderAll();
+  document.getElementById('status').textContent = 'Phase 1 of 3 \u2014 generating Front (anchor)\u2026';
+  wfcAnimId = requestAnimationFrame(tick);
+}
+
+// ---- Count display ----
+function updateCountDisplay() {
+  document.getElementById('count-display').textContent = `${side*side} tiles (${side}\u00d7${side})`;
+  document.getElementById('btn-minus').disabled = side <= 1;
+  document.getElementById('btn-plus').disabled  = side >= 10;
+}
+
+// ---- Buttons ----
+document.getElementById('btn-gen').addEventListener('click', generate);
+document.getElementById('btn-minus').addEventListener('click', () => { if(side<=1)return; side--; updateCountDisplay(); generate(); });
+document.getElementById('btn-plus').addEventListener('click',  () => { if(side>=10)return; side++; updateCountDisplay(); generate(); });
+
+// ---- Init ----
+updateCountDisplay();
+generate();
+</script>
+</body>
+</html>
